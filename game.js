@@ -121,7 +121,8 @@ let gameState = {
     showBag: false,        // 背包显示状态
     currentSkin: 'default', // 当前使用的皮肤
     unlockedSkins: ['default'],  // 已解锁的皮肤
-    inventory: []  // 添加背包
+    inventory: [],  // 添加背包
+    savedSpeedMultiplier: 1,  // 添加速度保存属性
 };
 
 // 添加声音效果
@@ -288,26 +289,14 @@ function init() {
     gameState.stars = [];
     gameState.totalStarsGenerated = 0;  // 重置星星计数
     gameState.speedBoosts = 0;
-    gameState.speedMultiplier = BASE_SPEED;
+    gameState.speedMultiplier = 1;  // 固定速度倍数为1
     gameState.lastGameWon = false;
     gameState.currentLevel = 1;
     generateStars();
     gameState.showBag = false;
     gameState.currentSkin = 'default';
     gameState.unlockedSkins = ['default'];
-
-    // 根据上一局结果设置速度
-    if (gameState.lastGameWon) {
-        // 如果上一局胜利，速度增加0.5
-        gameState.speedMultiplier = BASE_SPEED + LEVEL_SPEED_UP;
-    } else {
-        // 如果失败，重置速度
-        gameState.speedMultiplier = BASE_SPEED;
-        gameState.currentLevel = 1;
-    }
-
-    // 加载已保存的皮肤数据
-    loadSkins();
+    loadSkins();  // 加载已解锁的皮肤
 }
 
 // 修改生成箱子的函数
@@ -414,9 +403,8 @@ function update() {
         return;
     }
 
-    // 根据当前速度调整重力和跳跃力度
-    const currentGravity = cat.baseGravity * (gameState.speedMultiplier ** 2);  // 使用平方关系
-    cat.velocity += currentGravity;
+    // 使用固定的重力值，不受速度影响
+    cat.velocity += cat.baseGravity;
     cat.y += cat.velocity;
 
     // 简化碰撞检测
@@ -433,10 +421,10 @@ function update() {
         cat.velocity = 0;
     }
 
-    // 优化箱子更新
+    // 优化箱子更新，使用固定速度
     for (let i = boxes.length - 1; i >= 0; i--) {
         const box = boxes[i];
-        box.x -= PIPE_SPEED * gameState.speedMultiplier;
+        box.x -= PIPE_SPEED;
         
         if (box.x + box.width < -50) {
             boxes.splice(i, 1);
@@ -465,10 +453,10 @@ function update() {
         }
     }
 
-    // 优化金币更新
+    // 优化金币更新，使用固定速度
     for (let i = coins.length - 1; i >= 0; i--) {
         const coin = coins[i];
-        coin.x -= COIN_SPEED * gameState.speedMultiplier;
+        coin.x -= COIN_SPEED;
         
         // 恢复金币碰撞检测
         if (!coin.collected && checkCoinCollision(coin)) {
@@ -486,18 +474,19 @@ function update() {
     // 更新星星
     for (let i = gameState.stars.length - 1; i >= 0; i--) {
         const star = gameState.stars[i];
-        star.x -= STAR_SPEED * gameState.speedMultiplier;
+        star.x -= STAR_SPEED;  // 移除speedMultiplier的影响
         
         // 检查星星碰撞
         if (!star.collected && checkStarCollision(star)) {
             star.collected = true;
             gameState.speedBoosts++;
-            gameState.speedMultiplier += SPEED_BOOST;  // 增加速度
+            // 移除速度增加
             sounds.score.play();
         }
         
         if (star.x + star.size < -50 || star.collected) {
             gameState.stars.splice(i, 1);
+            continue;
         }
     }
 
@@ -1195,16 +1184,24 @@ function gameLoop() {
     }
 
     // 继续游戏循环
-    gameState.frameId = requestAnimationFrame(gameLoop);
+    if (gameState.isRunning) {
+        gameState.frameId = requestAnimationFrame(gameLoop);
+    }
 }
 
 // 修改游戏开始函数
 function startGame() {
+    // 确保在启动新游戏循环前取消旧的循环
+    if (gameState.frameId) {
+        cancelAnimationFrame(gameState.frameId);
+        gameState.frameId = null;
+    }
+    
     init();
     gameState.isRunning = true;
     gameState.isPaused = false;
     gameState.showShop = false;
-    requestAnimationFrame(gameLoop);
+    gameState.frameId = requestAnimationFrame(gameLoop);
 }
 
 // 修改点击事件
@@ -1258,7 +1255,7 @@ canvas.addEventListener('click', (e) => {
     if (gameState.showShop) {
         // 关闭按钮
         if (x > canvas.width - 40 && x < canvas.width && y < 40) {
-            toggleShop();  // 关闭商城并恢复游戏
+            closeShop();  // 关闭商城并恢复游戏
             return;
         }
 
@@ -1299,8 +1296,8 @@ canvas.addEventListener('click', (e) => {
         if (!gameState.isRunning) {
             startGame();
         } else if (!cat.isJumping || cat.velocity < 0) {
-            // 根据当前速度调整跳跃力度
-            cat.velocity = cat.baseJump * (gameState.speedMultiplier ** 2);  // 使用平方关系
+            // 使用固定的跳跃力度
+            cat.velocity = cat.baseJump;
             cat.isJumping = true;
             sounds.jump.play();
         }
@@ -1313,6 +1310,7 @@ function toggleShop() {
         // 打开商城时
         gameState.showShop = true;
         gameState.isRunning = false;
+        gameState.wasRunning = true;  // 记录游戏状态
     } else {
         // 关闭商城时
         gameState.showShop = false;
@@ -1847,4 +1845,15 @@ window.onload = function() {
     } else {
         console.error('Canvas或上下文未准备好');
     }
-}; 
+};
+
+// 修改商城关闭函数
+function closeShop() {
+    gameState.showShop = false;
+    gameState.isPaused = false;
+    if (gameState.wasRunning) {
+        gameState.isRunning = true;
+        // 移除重复调用gameLoop的代码
+    }
+    gameState.wasRunning = false;
+} 
